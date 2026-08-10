@@ -12,6 +12,7 @@ project(${LIBRARY_NAME} VERSION ${LIBRARY_VERSION})
 set(SOURCES 
     "${CMAKE_CURRENT_SOURCE_DIR}/vm_util.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/iris_rtc_rendering_android.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external_audio_render.cc"
      )
 
 add_library(${LIBRARY_NAME} SHARED
