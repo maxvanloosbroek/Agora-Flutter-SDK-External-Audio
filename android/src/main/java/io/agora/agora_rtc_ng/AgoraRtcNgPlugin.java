@@ -28,6 +28,7 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
     private WeakReference<FlutterPluginBinding> flutterPluginBindingRef;
     private VideoViewController videoViewController;
     private ExternalAudioRender externalAudioRender;
+    private ExternalAudioCapture externalAudioCapture;
     private AgoraPIPController pipController;
     @Nullable
     private Context applicationContext;
@@ -65,6 +66,10 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
             externalAudioRender.stop();
             externalAudioRender = null;
         }
+        if (externalAudioCapture != null) {
+            externalAudioCapture.stop();
+            externalAudioCapture = null;
+        }
         applicationContext = null;
         channel.setMethodCallHandler(null);
         videoViewController.dispose();
@@ -100,6 +105,28 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
         } else if ("stopExternalAudioRender".equals(call.method)) {
             if (externalAudioRender != null) {
                 externalAudioRender.stop();
+            }
+            result.success(true);
+        } else if ("startExternalAudioCapture".equals(call.method)) {
+            if (applicationContext == null) {
+                result.success(false);
+                return;
+            }
+            Map<?, ?> captureArgs = (Map<?, ?>) call.arguments;
+            long captureHandle = ((Number) captureArgs.get("nativeHandle")).longValue();
+            int captureTrackId = ((Number) captureArgs.get("trackId")).intValue();
+            int captureSampleRate = ((Number) captureArgs.get("sampleRate")).intValue();
+            int captureChannels = ((Number) captureArgs.get("channels")).intValue();
+            boolean usePlatformEffects = Boolean.TRUE.equals(captureArgs.get("usePlatformEffects"));
+            if (externalAudioCapture == null) {
+                externalAudioCapture = new ExternalAudioCapture();
+            }
+            result.success(externalAudioCapture.start(
+                    applicationContext, captureHandle, captureTrackId,
+                    captureSampleRate, captureChannels, usePlatformEffects));
+        } else if ("stopExternalAudioCapture".equals(call.method)) {
+            if (externalAudioCapture != null) {
+                externalAudioCapture.stop();
             }
             result.success(true);
         } else if (call.method.startsWith("pip")) {

@@ -108,6 +108,42 @@ extension RtcEngineExt on RtcEngine {
     }
     await invokeAgoraMethod<void>('stopExternalAudioRender');
   }
+
+  /// Starts capturing the microphone and pushing frames to a custom audio track.
+  ///
+  /// Create the track with `createCustomAudioTrack` first and pass its
+  /// [trackId]. Join the channel with `publishMicrophoneTrack: false`,
+  /// `publishCustomAudioTrack: true` and `publishCustomAudioTrackId: trackId`.
+  Future<bool> startExternalAudioCapture({
+    required int trackId,
+    int sampleRate = 48000,
+    int channels = 1,
+    bool usePlatformEffects = false,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    final nativeHandle = await getNativeHandle();
+    if (nativeHandle == 0) {
+      return false;
+    }
+    return await invokeAgoraMethod<bool>('startExternalAudioCapture', {
+          'nativeHandle': nativeHandle,
+          'trackId': trackId,
+          'sampleRate': sampleRate,
+          'channels': channels,
+          'usePlatformEffects': usePlatformEffects,
+        }) ??
+        false;
+  }
+
+  /// Stops Android USB external audio capture.
+  Future<void> stopExternalAudioCapture() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    await invokeAgoraMethod<void>('stopExternalAudioCapture');
+  }
 }
 
 /// Error code and description.

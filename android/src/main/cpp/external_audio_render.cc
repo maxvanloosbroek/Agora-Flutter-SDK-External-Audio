@@ -81,3 +81,40 @@ Java_io_agora_agora_1rtc_1ng_ExternalAudioRender_nativeResetCache(
   cached_engine_handle = 0;
   cached_media_engine = nullptr;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_io_agora_agora_1rtc_1ng_ExternalAudioCapture_nativePushAudioFrame(
+    JNIEnv* env, jobject, jlong engine_handle, jobject direct_buffer,
+    jint samples_per_channel, jint channels, jint sample_rate, jint track_id,
+    jlong timestamp_ms) {
+  auto* media_engine = get_media_engine(engine_handle);
+  if (media_engine == nullptr) {
+    return -1;
+  }
+
+  void* buffer = env->GetDirectBufferAddress(direct_buffer);
+  if (buffer == nullptr) {
+    __android_log_print(ANDROID_LOG_ERROR, kLogTag,
+                        "nativePushAudioFrame requires a direct buffer");
+    return -2;
+  }
+
+  agora::media::IAudioFrameObserverBase::AudioFrame frame{};
+  frame.type = agora::media::IAudioFrameObserverBase::FRAME_TYPE_PCM16;
+  frame.samplesPerChannel = samples_per_channel;
+  frame.bytesPerSample = agora::rtc::TWO_BYTES_PER_SAMPLE;
+  frame.channels = channels;
+  frame.samplesPerSec = sample_rate;
+  frame.buffer = buffer;
+  frame.renderTimeMs = timestamp_ms;
+
+  const int result = media_engine->pushAudioFrame(
+      &frame, static_cast<agora::rtc::track_id_t>(track_id));
+  if (result != 0) {
+    __android_log_print(ANDROID_LOG_ERROR, kLogTag,
+                        "pushAudioFrame failed: %d", result);
+    return -3;
+  }
+
+  return samples_per_channel * channels * 2;
+}

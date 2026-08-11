@@ -18,5 +18,10 @@ void main() {
       isFalse,
     );
     await engine.stopExternalAudioRender();
+    expect(
+      await engine.startExternalAudioCapture(trackId: 1),
+      isFalse,
+    );
+    await engine.stopExternalAudioCapture();
   });
 }

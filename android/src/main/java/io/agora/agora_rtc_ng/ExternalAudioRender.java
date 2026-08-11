@@ -10,6 +10,9 @@ import android.os.Build;
 import android.os.Process;
 import android.util.Log;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class ExternalAudioRender {
@@ -32,6 +35,8 @@ public class ExternalAudioRender {
     private int frameBytes;
     private volatile long framesPulled;
     private volatile long silenceInserted;
+    private static final boolean DEBUG_DUMP_PCM = false;
+    private FileOutputStream farEndDump;
 
     public static boolean hasUsbOutput(Context context) {
         return findUsbOutput(context) != null;
@@ -66,6 +71,15 @@ public class ExternalAudioRender {
             framesPulled = 0;
             silenceInserted = 0;
             running = true;
+            if (DEBUG_DUMP_PCM) {
+                try {
+                    File dir = context.getExternalFilesDir(null);
+                    farEndDump = new FileOutputStream(new File(dir, "farend.pcm"));
+                } catch (IOException e) {
+                    Log.e(TAG, "start: cannot open farend dump", e);
+                    farEndDump = null;
+                }
+            }
             renderThread = new Thread(this::renderLoop, "AgoraExternalAudioRender");
             renderThread.start();
             Log.i(TAG, "start: sampleRate=" + sampleRate
@@ -96,6 +110,14 @@ public class ExternalAudioRender {
                     Thread.currentThread().interrupt();
                 }
                 renderThread = null;
+            }
+
+            if (farEndDump != null) {
+                try {
+                    farEndDump.close();
+                } catch (IOException ignored) {
+                }
+                farEndDump = null;
             }
 
             if (audioTrack != null) {
@@ -190,11 +212,27 @@ public class ExternalAudioRender {
             }
 
             buffer.position(0);
+            if (farEndDump != null) {
+                try {
+                    byte[] copy = new byte[bytes];
+                    buffer.get(copy, 0, bytes);
+                    farEndDump.write(copy);
+                    buffer.position(0);
+                } catch (IOException e) {
+                    Log.e(TAG, "renderLoop: farend dump write failed", e);
+                }
+            }
             if (audioTrack != null) {
                 int written = audioTrack.write(buffer, bytes, AudioTrack.WRITE_BLOCKING);
                 if (written < 0) {
                     Log.e(TAG, "renderLoop: AudioTrack.write failed: " + written);
                     break;
+                }
+                if (framesPulled > 0 && framesPulled % 500 == 0
+                        && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    Log.i(TAG, "latency: headPos=" + audioTrack.getPlaybackHeadPosition()
+                            + " bufferSizeFrames=" + audioTrack.getBufferSizeInFrames()
+                            + " " + getStatsLine());
                 }
             }
         }

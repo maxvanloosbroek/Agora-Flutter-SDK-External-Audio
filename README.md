@@ -166,6 +166,171 @@ await engine.release();
 
 The renderer uses mono 48 kHz PCM16 and the Android media-volume stream. If no USB output is present, the normal Agora renderer is left unchanged. The USB device in this scenario is a plain output DAC without onboard echo cancellation, so Agora's echo cancellation remains enabled. When testing echo, compare `LocalAudioStats.aecEstimatedDelay` with the renderer's measured latency; use a low-latency buffer and stable 10 ms writes. If the USB device is unplugged during a call, stop the external renderer and use the normal route on the next call.
 
+### Android external microphone capture
+
+When external USB rendering is active, Agora's built-in microphone path is no longer the right capture path: the built-in AEC has no visibility into the USB playback buffer, so echo cancellation cannot work. This fork therefore also provides an external capture path that takes ownership of microphone PCM and pushes it into Agora through a custom direct audio track. This is the foundation for the in-process AEC described in the next section.
+
+The extension API:
+
+- `startExternalAudioCapture(trackId)` opens an Android `AudioRecord` (48 kHz mono PCM16, 10 ms frames) on a dedicated thread and pushes each frame through JNI into `IMediaEngine::pushAudioFrame` with the given custom track ID.
+- `stopExternalAudioCapture()` stops and releases the capture thread before engine teardown.
+
+The caller is responsible for creating the Agora custom audio track and joining with the correct `ChannelMediaOptions`:
+
+```dart
+final engine = createAgoraRtcEngine();
+await engine.initialize(const RtcEngineContext(appId: appId));
+
+final useUsbAudio = await engine.hasUsbAudioOutput();
+int? customAudioTrackId;
+if (useUsbAudio) {
+  await engine.getMediaEngine().setExternalAudioSink(
+        enabled: true, sampleRate: 48000, channels: 1,
+      );
+  customAudioTrackId = await engine.getMediaEngine().createCustomAudioTrack(
+        trackType: AudioTrackType.audioTrackDirect,
+        config: const AudioTrackConfig(
+          enableLocalPlayback: false,
+          enableAudioProcessing: false,
+        ),
+      );
+}
+
+final mediaOptions = ChannelMediaOptions(
+  publishCameraTrack: true,
+  publishMicrophoneTrack: !useUsbAudio,
+  publishCustomAudioTrack: useUsbAudio,
+  publishCustomAudioTrackId: customAudioTrackId ?? 0,
+  autoSubscribeAudio: true,
+  autoSubscribeVideo: true,
+);
+await engine.joinChannel(
+  token: token, channelId: channelId, uid: 0, options: mediaOptions,
+);
+
+if (useUsbAudio) {
+  await engine.startExternalAudioRender(sampleRate: 48000, channels: 1);
+  await engine.startExternalAudioCapture(trackId: customAudioTrackId!);
+}
+
+// ... call ...
+
+if (useUsbAudio) {
+  await engine.stopExternalAudioCapture();
+  await engine.stopExternalAudioRender();
+  await engine.getMediaEngine().destroyCustomAudioTrack(trackId: customAudioTrackId!);
+  await engine.getMediaEngine().setExternalAudioSink(
+        enabled: false, sampleRate: 48000, channels: 1,
+      );
+}
+await engine.leaveChannel();
+await engine.release();
+```
+
+Lifecycle symmetry matters: capture and render must be started after joining and stopped before leaving; the custom track must be created before joining and destroyed after leaving. The plugin also stops both components during detachment to avoid leaking native threads.
+
+When the external path is active, Agora reports `aecEstimatedDelay=0`, `audioDeviceDelay=0`, `audioPlayoutDelay=0` in `LocalAudioStats` — these are Agora's internal-path statistics and do not reflect the external path. The external renderer logs its own latency (`headPos`, `bufferSizeFrames`, `framesPulled`, `silenceInserted`, `underruns`) and the external capture logs `framesCaptured` and `framesDropped`.
+
+### In-process WebRTC AEC3 (build)
+
+When external USB rendering and external microphone capture are both active, neither Agora's APM nor Android's `AcousticEchoCanceler` can cancel the echo: neither has access to the PCM actually written to the USB `AudioTrack`, which is the only accurate far-end reference. The plan for this fork is to run WebRTC's AEC3 in-process, fed with the exact USB playback buffer as the render reference and the captured microphone PCM as the near-end signal.
+
+The WebRTC AudioProcessing module is built from the [`helloooideeeeea/webrtc-audio-processing`](https://github.com/helloooideeeeea/webrtc-audio-processing) fork of the freedesktop.org/PulseAudio packaging (v1.3, BSD-3). Prebuilt static libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64` are vendored under `android/src/main/cpp/third_party/webrtc_apm/`:
+
+```
+third_party/webrtc_apm/
+├── include/
+│   ├── absl/                       # Abseil headers (auto-built by meson wrap)
+│   └── webrtc-audio-processing-1/  # APM headers (audio_processing.h, etc.)
+└── lib/
+    ├── arm64-v8a/      # libwebrtc-audio-processing-1.a + 15 abseil .a + libwebrtc-audio-coding-1.a
+    ├── armeabi-v7a/    # same set
+    └── x86_64/         # same set
+```
+
+#### How the prebuilt libraries were produced
+
+The build is host-side only (Linux). Meson and Ninja are needed only on the build host; nothing Python-related ships in the APK.
+
+1. Install meson and ninja in an isolated venv (avoids Debian's externally-managed-environment restriction):
+
+   ```bash
+   python3 -m venv ~/webrtc-build-venv
+   ~/webrtc-build-venv/bin/pip install -U pip meson ninja
+   export PATH=~/webrtc-build-venv/bin:$PATH
+   ```
+
+2. Clone the source:
+
+   ```bash
+   git clone --depth 1 https://github.com/helloooideeeeea/webrtc-audio-processing.git ~/webrtc-audio-processing
+   ```
+
+3. Edit the three `cross_android_*.ini` files in the clone root. Set `ndk_path` to your local NDK 27.0.12077973 and change `darwin-x86_64` to `linux-x86_64` in the `bin` constant:
+
+   ```ini
+   [constants]
+   ndk_path  = '/home/<user>/Android/Sdk/ndk/27.0.12077973'
+   bin       = ndk_path + '/toolchains/llvm/prebuilt/linux-x86_64/bin/'
+   ```
+
+   The cross-files already include the 16K page-size linker flags (`-Wl,-z,max-page-size=16384`, `-Wl,-z,common-page-size=16384`) required by Android 15, matching the flags used in this plugin's `CMakeLists.txt`.
+
+4. Build each ABI. Meson's wrap system automatically downloads and builds abseil-cpp 20230125.1 as a subproject — no manual abseil build is needed.
+
+   ```bash
+   cd ~/webrtc-audio-processing
+   for abi in aarch64 armv7a x86_64; do
+     meson setup android_build_${abi} --cross-file cross_android_${abi}.ini \
+       -Dprefix=$PWD/pre_install/android/${abi} -Ddefault_library=static
+     meson compile -C android_build_${abi}
+     meson install -C android_build_${abi}
+   done
+   ```
+
+5. Copy the outputs into the plugin. The abseil static libs are not installed by `meson install` (they are subproject build artifacts), so they must be copied from the build directory:
+
+   ```bash
+   SDK=~/Documents/Repositories/Agora-Flutter-SDK-External-Audio/android/src/main/cpp/third_party/webrtc_apm
+   mkdir -p $SDK/include $SDK/lib/{arm64-v8a,armeabi-v7a,x86_64}
+   for abi_pair in "aarch64:arm64-v8a" "armv7a:armeabi-v7a" "x86_64:x86_64"; do
+     src_abi=${abi_pair%%:*}; dst_abi=${abi_pair##*:}
+     src=~/webrtc-audio-processing/pre_install/android/${src_abi}
+     cp $src/lib/libwebrtc-audio-processing-1.a $SDK/lib/${dst_abi}/
+     cp $src/lib/libwebrtc-audio-coding-1.a       $SDK/lib/${dst_abi}/
+     cp ~/webrtc-audio-processing/android_build_${src_abi}/subprojects/abseil-cpp-20230125.1/libabsl_*.a $SDK/lib/${dst_abi}/
+   done
+   cp -r ~/webrtc-audio-processing/pre_install/android/aarch64/include/webrtc-audio-processing-1 $SDK/include/
+   cp -r ~/webrtc-audio-processing/pre_install/android/aarch64/include/absl $SDK/include/
+   ```
+
+Each ABI produces 17 static libraries: `libwebrtc-audio-processing-1.a`, `libwebrtc-audio-coding-1.a`, and 15 abseil libs (`libabsl_base.a`, `libabsl_strings.a`, `libabsl_synchronization.a`, `libabsl_flags.a`, `libabsl_hash.a`, `libabsl_status.a`, `libabsl_time.a`, `libabsl_types.a`, `libabsl_container.a`, `libabsl_debugging.a`, `libabsl_log.a`, `libabsl_numeric.a`, `libabsl_random.a`, `libabsl_crc.a`, `libabsl_profiling.a`). The linker only pulls in the symbols actually referenced.
+
+#### Why this source was chosen
+
+The `helloooideeeeea` fork was selected over alternatives because it ships ready-made Android meson cross-files, auto-builds abseil via meson's wrap system (no manual abseil build), pins to NDK 27.0.12077973 (which matches a locally installed NDK), and includes the 16K page-size linker flags required by Android 15. Alternatives considered and rejected:
+
+- `get-wrecked/webrtc-audioprocessing` (CMake, M124): Windows-focused, no Android cross-file.
+- `alfatraining/webrtc-audio-processing` (cmake): Desktop-focused, "opinionated on absl".
+- `Yishiba/chromium_libwebrtc_audio_preprocessing_for_android` and `thepacific/webrtc-android-jni`: stale, use the legacy `echo_cancellation` sub-API rather than AEC3.
+- `callmekendy/build-webrtc-android-static-library`: pulls full WebRTC source via `gclient` (multi-GB), heavyweight fallback only.
+- GStreamer prebuilt Android binaries: pulls in all of GStreamer as a transitive dependency.
+- Official `org.webrtc:google-webrtc:1.0.+` AAR: JCenter shut down, bundles the full media pipeline.
+
+#### APM API surface used
+
+The integration uses the modern `AudioProcessingBuilder` API (not the legacy `AudioProcessing::Create()`):
+
+- `webrtc::AudioProcessingBuilder().Create()` constructs the APM.
+- `apm->GetConfig()` / `apm->ApplyConfig(config)` configure it. The relevant config fields are `config.echo_canceller.enabled = true`, `config.echo_canceller.mobile_mode = false`, and `config.high_pass_filter.enabled = true`.
+- `apm->ProcessReverseStream(frame, in_cfg, out_cfg, frame)` feeds the far-end (render) reference — the same PCM that is about to be written to the USB `AudioTrack`.
+- `apm->set_stream_delay_ms(delay)` reports the measured render-to-capture delay.
+- `apm->ProcessStream(frame, in_cfg, out_cfg, frame)` processes the near-end (capture) frame in place.
+- `webrtc::StreamConfig(48000, 1)` matches the fixed 48 kHz mono 10 ms format used throughout the external audio path.
+- `webrtc::AudioProcessing::Destroy(apm)` releases the APM.
+
+The AEC3 integration itself (the `AecProcessor` C++ class, CMake wiring, render/capture thread sharing, and delay alignment) is implemented in the steps following the build spike in the implementation plan.
+
 ### Known issues
 #### iOS not work on release mode
 
