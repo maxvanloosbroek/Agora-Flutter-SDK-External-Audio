@@ -144,6 +144,17 @@ extension RtcEngineExt on RtcEngine {
     }
     await invokeAgoraMethod<void>('stopExternalAudioCapture');
   }
+
+  /// Sets the AEC stream delay hint in milliseconds.
+  ///
+  /// AEC3 uses this as a starting point for adaptive delay tracking.
+  /// Range 0–300 ms, default 150. Adjust live during a call to tune.
+  Future<void> setAecDelay(int delayMs) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    await invokeAgoraMethod<void>('setAecDelay', {'delayMs': delayMs});
+  }
 }
 
 /// Error code and description.

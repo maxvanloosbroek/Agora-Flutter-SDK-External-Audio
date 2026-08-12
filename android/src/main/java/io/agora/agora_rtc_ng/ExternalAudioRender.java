@@ -82,6 +82,7 @@ public class ExternalAudioRender {
             }
             renderThread = new Thread(this::renderLoop, "AgoraExternalAudioRender");
             renderThread.start();
+            nativeAecCreate(sampleRate, channels);
             Log.i(TAG, "start: sampleRate=" + sampleRate
                     + " channels=" + channels
                     + " frameBytes=" + frameBytes);
@@ -125,6 +126,7 @@ public class ExternalAudioRender {
                 audioTrack.release();
                 audioTrack = null;
             }
+            nativeAecDestroy();
             nativeResetCache();
         }
     }
@@ -222,6 +224,7 @@ public class ExternalAudioRender {
                     Log.e(TAG, "renderLoop: farend dump write failed", e);
                 }
             }
+            nativeAecPlayback(buffer, samplesPerChannel);
             if (audioTrack != null) {
                 int written = audioTrack.write(buffer, bytes, AudioTrack.WRITE_BLOCKING);
                 if (written < 0) {
@@ -282,4 +285,16 @@ public class ExternalAudioRender {
                                              int sampleRate);
 
     private native void nativeResetCache();
+
+    private native void nativeAecCreate(int sampleRate, int channels);
+
+    private native void nativeAecDestroy();
+
+    private native void nativeAecPlayback(ByteBuffer buffer, int samplesPerChannel);
+
+    private native void nativeAecSetDelay(int delayMs);
+
+    public void setAecDelay(int delayMs) {
+        nativeAecSetDelay(delayMs);
+    }
 }

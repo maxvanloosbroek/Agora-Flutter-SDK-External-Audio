@@ -216,6 +216,8 @@ public class ExternalAudioCapture {
             }
 
             buffer.position(0);
+            nativeAecCapture(buffer, samplesPerChannel);
+            buffer.position(0);
             int pushed = nativePushAudioFrame(
                     engineHandle, buffer, samplesPerChannel, channels, sampleRate,
                     trackId, System.currentTimeMillis());
@@ -231,4 +233,6 @@ public class ExternalAudioCapture {
                                             int samplesPerChannel, int channels,
                                             int sampleRate, int trackId,
                                             long timestampMs);
+
+    private native void nativeAecCapture(ByteBuffer buffer, int samplesPerChannel);
 }

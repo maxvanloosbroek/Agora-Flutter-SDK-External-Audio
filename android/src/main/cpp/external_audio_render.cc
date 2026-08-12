@@ -4,6 +4,7 @@
 #include "AgoraMediaBase.h"
 #include "IAgoraMediaEngine.h"
 #include "IAgoraRtcEngine.h"
+#include "aec_processor.h"
 
 namespace {
 
@@ -11,6 +12,7 @@ constexpr char kLogTag[] = "ExternalAudioRender";
 
 int64_t cached_engine_handle = 0;
 agora::media::IMediaEngine* cached_media_engine = nullptr;
+AecProcessor* g_aec = nullptr;
 
 agora::media::IMediaEngine* get_media_engine(int64_t engine_handle) {
   if (engine_handle == cached_engine_handle && cached_media_engine != nullptr) {
@@ -117,4 +119,50 @@ Java_io_agora_agora_1rtc_1ng_ExternalAudioCapture_nativePushAudioFrame(
   }
 
   return samples_per_channel * channels * 2;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_agora_agora_1rtc_1ng_ExternalAudioRender_nativeAecCreate(
+    JNIEnv*, jobject, jint sample_rate, jint channels) {
+  delete g_aec;
+  g_aec = AecProcessor::Create(sample_rate, channels);
+  __android_log_print(ANDROID_LOG_INFO, kLogTag,
+                      "nativeAecCreate: %p (sr=%d ch=%d)",
+                      g_aec, sample_rate, channels);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_agora_agora_1rtc_1ng_ExternalAudioRender_nativeAecDestroy(
+    JNIEnv*, jobject) {
+  __android_log_print(ANDROID_LOG_INFO, kLogTag,
+                      "nativeAecDestroy: %p", g_aec);
+  delete g_aec;
+  g_aec = nullptr;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_agora_agora_1rtc_1ng_ExternalAudioRender_nativeAecPlayback(
+    JNIEnv* env, jobject, jobject direct_buffer, jint samples_per_channel) {
+  if (g_aec == nullptr) return;
+  auto* buf = static_cast<int16_t*>(env->GetDirectBufferAddress(direct_buffer));
+  if (buf == nullptr) return;
+  g_aec->Playback(buf, samples_per_channel);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_agora_agora_1rtc_1ng_ExternalAudioCapture_nativeAecCapture(
+    JNIEnv* env, jobject, jobject direct_buffer, jint samples_per_channel) {
+  if (g_aec == nullptr) return;
+  auto* buf = static_cast<int16_t*>(env->GetDirectBufferAddress(direct_buffer));
+  if (buf == nullptr) return;
+  g_aec->Capture(buf, buf, samples_per_channel);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_agora_agora_1rtc_1ng_ExternalAudioRender_nativeAecSetDelay(
+    JNIEnv*, jobject, jint delay_ms) {
+  if (g_aec == nullptr) return;
+  g_aec->SetStreamDelayMs(delay_ms);
+  __android_log_print(ANDROID_LOG_INFO, kLogTag,
+                      "nativeAecSetDelay: %d ms", delay_ms);
 }

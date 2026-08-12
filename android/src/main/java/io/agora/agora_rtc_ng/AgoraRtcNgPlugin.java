@@ -129,6 +129,13 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
                 externalAudioCapture.stop();
             }
             result.success(true);
+        } else if ("setAecDelay".equals(call.method)) {
+            if (externalAudioRender != null) {
+                Map<?, ?> args = (Map<?, ?>) call.arguments;
+                int delayMs = ((Number) args.get("delayMs")).intValue();
+                externalAudioRender.setAecDelay(delayMs);
+            }
+            result.success(true);
         } else if (call.method.startsWith("pip")) {
             handlePipMethodCall(call, result);
         } else {

@@ -9,10 +9,11 @@ set(LIBRARY_VERSION "0.1.0")
 
 project(${LIBRARY_NAME} VERSION ${LIBRARY_VERSION})
 
-set(SOURCES 
+set(SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/vm_util.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/iris_rtc_rendering_android.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/external_audio_render.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/aec_processor.cc"
      )
 
 add_library(${LIBRARY_NAME} SHARED
@@ -48,9 +49,35 @@ endif()
 set(THIRD_PARTY_INCLUDE_DIRS
   "${CMAKE_CURRENT_SOURCE_DIR}/third_party/include/iris"
   "${CMAKE_CURRENT_SOURCE_DIR}/third_party/include/agora_rtc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webrtc_apm/include"
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webrtc_apm/include/webrtc-audio-processing-1"
   )
 
 target_include_directories(${LIBRARY_NAME} PRIVATE
   "$<BUILD_INTERFACE:${THIRD_PARTY_INCLUDE_DIRS}>"
   "$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${CMAKE_INSTALL_INCLUDEDIR}>"
   )
+
+# WebRTC AudioProcessing (AEC3) prebuilt static libraries.
+# Only link if prebuilt libs exist for the current ABI (x86 is not built).
+set(WEBRTC_APM_LIB_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webrtc_apm/lib/${ANDROID_ABI}")
+
+set(WEBRTC_APM_LIBS
+    webrtc-audio-processing-1
+    webrtc-audio-coding-1
+    absl_base absl_container absl_crc absl_debugging absl_flags
+    absl_hash absl_log absl_numeric absl_profiling absl_random
+    absl_status absl_strings absl_synchronization absl_time absl_types)
+
+if(EXISTS "${WEBRTC_APM_LIB_DIR}/libwebrtc-audio-processing-1.a")
+  foreach(lib ${WEBRTC_APM_LIBS})
+    add_library(${lib} STATIC IMPORTED)
+    set_target_properties(${lib} PROPERTIES IMPORTED_LOCATION
+      "${WEBRTC_APM_LIB_DIR}/lib${lib}.a")
+  endforeach()
+  target_link_libraries(${LIBRARY_NAME} PRIVATE ${WEBRTC_APM_LIBS})
+  target_compile_definitions(${LIBRARY_NAME} PRIVATE HAS_WEBRTC_APM=1)
+else()
+  message(STATUS "WebRTC APM libs not found for ${ANDROID_ABI}, AEC disabled")
+endif()
