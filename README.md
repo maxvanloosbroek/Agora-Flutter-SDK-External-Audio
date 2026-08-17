@@ -117,7 +117,7 @@ More detail, please check the [ProcessVideoRawData](example/lib/examples/advance
 
 ### Android USB-C external audio rendering
 
-On some Android devices, including the Samsung SM-X216B, a USB-C speaker is available to media audio but not to voice-communication audio. In that case, Agora's normal communication renderer may remain on the built-in speaker even when `setRouteInCommunicationMode` and `AudioManager.setCommunicationDevice` are used.
+When a USB-C speaker is available to media audio but not to voice-communication audio. In that case, Agora's normal communication renderer may remain on the built-in speaker even when `setRouteInCommunicationMode` and `AudioManager.setCommunicationDevice` are used.
 
 This fork provides an Android-only external rendering path through the `RtcEngine` extension API:
 
