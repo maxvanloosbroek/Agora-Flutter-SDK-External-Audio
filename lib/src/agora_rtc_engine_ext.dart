@@ -65,6 +65,49 @@ extension RtcEngineExt on RtcEngine {
       (this as RtcEngineImpl).setEnableArgusCounters(enabled);
     }
   }
+
+  /// Returns whether an Android USB audio output is connected.
+  ///
+  /// Call this before joining a channel. If this returns false, leave external
+  /// audio rendering disabled so Agora uses its normal renderer.
+  Future<bool> hasUsbAudioOutput() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    return await invokeAgoraMethod<bool>('hasUsbAudioOutput') ?? false;
+  }
+
+  /// Starts rendering mixed remote audio through the Android USB output.
+  ///
+  /// Call `setExternalAudioSink` with the same format before joining a channel,
+  /// then call this method after joining. Call [stopExternalAudioRender] before
+  /// releasing the engine.
+  Future<bool> startExternalAudioRender(
+      {int sampleRate = 48000, int channels = 1}) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    final nativeHandle = await getNativeHandle();
+    if (nativeHandle == 0) {
+      return false;
+    }
+    return await invokeAgoraMethod<bool>('startExternalAudioRender', {
+          'nativeHandle': nativeHandle,
+          'sampleRate': sampleRate,
+          'channels': channels,
+        }) ??
+        false;
+  }
+
+  /// Stops Android USB external audio rendering.
+  ///
+  /// Call this before releasing the engine.
+  Future<void> stopExternalAudioRender() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    await invokeAgoraMethod<void>('stopExternalAudioRender');
+  }
 }
 
 /// Error code and description.

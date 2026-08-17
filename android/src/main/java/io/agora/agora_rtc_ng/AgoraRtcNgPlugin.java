@@ -27,6 +27,7 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
     private MethodChannel channel;
     private WeakReference<FlutterPluginBinding> flutterPluginBindingRef;
     private VideoViewController videoViewController;
+    private ExternalAudioRender externalAudioRender;
     private AgoraPIPController pipController;
     @Nullable
     private Context applicationContext;
@@ -60,6 +61,10 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
 
     @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+        if (externalAudioRender != null) {
+            externalAudioRender.stop();
+            externalAudioRender = null;
+        }
         applicationContext = null;
         channel.setMethodCallHandler(null);
         videoViewController.dispose();
@@ -74,6 +79,28 @@ public class AgoraRtcNgPlugin implements FlutterPlugin, MethodChannel.MethodCall
             // System.loadLibrary here to trigger the JNI_OnLoad explicitly.
             System.loadLibrary("AgoraRtcWrapper");
 
+            result.success(true);
+        } else if ("hasUsbAudioOutput".equals(call.method)) {
+            result.success(applicationContext != null
+                    && ExternalAudioRender.hasUsbOutput(applicationContext));
+        } else if ("startExternalAudioRender".equals(call.method)) {
+            if (applicationContext == null) {
+                result.success(false);
+                return;
+            }
+            Map<?, ?> args = (Map<?, ?>) call.arguments;
+            long nativeHandle = ((Number) args.get("nativeHandle")).longValue();
+            int sampleRate = ((Number) args.get("sampleRate")).intValue();
+            int channels = ((Number) args.get("channels")).intValue();
+            if (externalAudioRender == null) {
+                externalAudioRender = new ExternalAudioRender();
+            }
+            result.success(externalAudioRender.start(
+                    applicationContext, nativeHandle, sampleRate, channels));
+        } else if ("stopExternalAudioRender".equals(call.method)) {
+            if (externalAudioRender != null) {
+                externalAudioRender.stop();
+            }
             result.success(true);
         } else if (call.method.startsWith("pip")) {
             handlePipMethodCall(call, result);

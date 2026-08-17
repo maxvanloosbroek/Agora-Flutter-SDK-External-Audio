@@ -115,6 +115,57 @@ We enable you to create an `RtcEngine` within Flutter by utilizing the native ha
 
 More detail, please check the [ProcessVideoRawData](example/lib/examples/advanced/process_video_raw_data/process_video_raw_data.dart) example for reference.
 
+### Android USB-C external audio rendering
+
+When a USB-C speaker is available to media audio but not to voice-communication audio. In that case, Agora's normal communication renderer may remain on the built-in speaker even when `setRouteInCommunicationMode` and `AudioManager.setCommunicationDevice` are used.
+
+This fork provides an Android-only external rendering path through the `RtcEngine` extension API:
+
+- `hasUsbAudioOutput()` checks whether a USB audio output is connected.
+- `startExternalAudioRender()` pulls mixed remote PCM audio natively and plays it through a media `AudioTrack` routed with `setPreferredDevice`.
+- `stopExternalAudioRender()` stops the external renderer before engine teardown.
+
+External rendering must be selected before joining the channel and started after joining:
+
+```dart
+final engine = createAgoraRtcEngine();
+await engine.initialize(const RtcEngineContext(appId: appId));
+
+final useUsbAudio = await engine.hasUsbAudioOutput();
+if (useUsbAudio) {
+  await engine.getMediaEngine().setExternalAudioSink(
+        enabled: true,
+        sampleRate: 48000,
+        channels: 1,
+      );
+}
+
+await engine.joinChannel(
+  token: token,
+  channelId: channelId,
+  uid: 0,
+  options: const ChannelMediaOptions(),
+);
+
+if (useUsbAudio) {
+  await engine.startExternalAudioRender(sampleRate: 48000, channels: 1);
+}
+
+// Stop external rendering before releasing the engine.
+if (useUsbAudio) {
+  await engine.stopExternalAudioRender();
+  await engine.getMediaEngine().setExternalAudioSink(
+        enabled: false,
+        sampleRate: 48000,
+        channels: 1,
+      );
+}
+await engine.leaveChannel();
+await engine.release();
+```
+
+The renderer uses mono 48 kHz PCM16 and the Android media-volume stream. If no USB output is present, the normal Agora renderer is left unchanged. The USB device in this scenario is a plain output DAC without onboard echo cancellation, so Agora's echo cancellation remains enabled. When testing echo, compare `LocalAudioStats.aecEstimatedDelay` with the renderer's measured latency; use a low-latency buffer and stable 10 ms writes. If the USB device is unplugged during a call, stop the external renderer and use the normal route on the next call.
+
 ### Known issues
 #### iOS not work on release mode
 
